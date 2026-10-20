@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { activeDriver, getDb } from "@/lib/db";
 import { activeProvider, providerConfigured } from "@/lib/ai/provider";
 import { paymentProvider } from "@/lib/payments";
+import { EPHEMERAL } from "@/lib/db/sqlite";
 
 /** GET /api/health — for uptime checks / deploy verification. */
 export async function GET() {
@@ -15,7 +16,7 @@ export async function GET() {
   return NextResponse.json(
     {
       status: db === "ok" ? "ok" : "degraded",
-      db: { driver: activeDriver(), status: db },
+      db: { driver: activeDriver(), status: db, persistent: activeDriver() !== "sqlite" || !EPHEMERAL },
       ai: { provider: activeProvider(), configured: providerConfigured() },
       payments: paymentProvider() ?? "none",
       latencyMs: Date.now() - started,

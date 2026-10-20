@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { activeProvider, providerConfigured } from "@/lib/ai/provider";
 import { activeDriver, isSupabaseConfigured } from "@/lib/db";
 import { paymentProvider } from "@/lib/payments";
+import { EPHEMERAL } from "@/lib/db/sqlite";
 import { Topbar } from "@/components/dashboard/Topbar";
 
 export const metadata = { title: "Settings" };
@@ -42,7 +43,7 @@ export default async function SettingsPage() {
           <h2 className="font-semibold">System status</h2>
           <ul className="mt-4 space-y-3 text-sm">
             <Status ok={aiOk} label={`AI provider: ${provider}`} hint={aiOk ? "Key detected" : "No API key — using offline mock generator. Set ANTHROPIC_API_KEY (or OPENAI_API_KEY) in .env.local"} />
-            <Status ok label={`Database: ${activeDriver()}`} hint={sbOk ? "Supabase Postgres + Auth + Storage" : "SQLite file at ./data/sitecraft.db (demo login). Add Supabase keys for production auth & Postgres."} />
+            <Status ok label={`Database: ${activeDriver()}`} hint={sbOk ? "Supabase Postgres + Auth + Storage" : EPHEMERAL ? "SQLite in /tmp on a serverless host — data resets on cold starts. Add Supabase keys for persistence." : "SQLite file at ./data/sitecraft.db (demo login). Add Supabase keys for production auth & Postgres."} />
             <Status ok={!!paymentProvider()} label={`Payments: ${paymentProvider() ?? "not configured"}`} hint={paymentProvider() ? "Live checkout enabled" : "Add RAZORPAY_* or STRIPE_* keys in .env.local"} />
           </ul>
         </section>

@@ -16,6 +16,12 @@ multiple complete designs → edit with **prompts** or a **visual click-to-edit*
 | Payments   | **Razorpay** (INR/UPI) or **Stripe** — checkout + webhooks + credit ledger |
 | Demo mode  | No keys needed: SQLite + mock generator                                 |
 
+## Deploy
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsunnykumar7739-i%2FSiteCraft-AI&project-name=sitecraft-ai&env=ANTHROPIC_API_KEY&envDescription=Anthropic%20API%20key%20for%20real%20AI%20designs%20(optional%20for%20demo))
+
+On Vercel the demo DB lives in `/tmp` (resets on cold starts). For real users add the Supabase keys in Project → Settings → Environment Variables.
+
 ## Quick start (2 minutes, no accounts needed)
 
 ```bash

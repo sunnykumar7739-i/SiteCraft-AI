@@ -17,7 +17,12 @@ type SqliteDb = {
   };
 };
 
-const DATA_DIR = path.join(process.cwd(), "data");
+/**
+ * Serverless hosts (Vercel/Netlify) only allow writes under /tmp and wipe it between cold starts —
+ * fine for a demo, but set Supabase keys for real persistence there. Override with DATA_DIR.
+ */
+export const EPHEMERAL = !process.env.DATA_DIR && !!(process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const DATA_DIR = process.env.DATA_DIR || (EPHEMERAL ? path.join("/tmp", "sitecraft-data") : path.join(process.cwd(), "data"));
 const DB_FILE = path.join(DATA_DIR, "sitecraft.db");
 
 const g = globalThis as unknown as { __sitecraftSqlite?: SqliteDb };
