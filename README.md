@@ -11,8 +11,10 @@ multiple complete designs → edit with **prompts** or a **visual click-to-edit*
 | Framework  | Next.js 16 (App Router, TypeScript, Turbopack)                          |
 | Styling    | Tailwind CSS v4 + custom design tokens (warm dark / gold)               |
 | AI         | Anthropic Claude (default) or OpenAI — switch with `AI_PROVIDER`        |
-| Auth + DB  | Supabase (Postgres, Google/GitHub/email) — **optional**                 |
-| Demo mode  | No keys needed: local JSON DB (`.data/db.json`) + mock generator        |
+| Database   | **SQLite** by default (`./data/sitecraft.db`, zero setup) → **Supabase Postgres** when keys are set |
+| Auth       | Supabase Auth (Google / GitHub / email) — or demo login without Supabase |
+| Payments   | **Razorpay** (INR/UPI) or **Stripe** — checkout + webhooks + credit ledger |
+| Demo mode  | No keys needed: SQLite + mock generator                                 |
 
 ## Quick start (2 minutes, no accounts needed)
 
@@ -33,6 +35,36 @@ Add `ANTHROPIC_API_KEY` to `.env.local` and restart to get real AI designs.
 2. **AI key**: `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY` + `AI_PROVIDER=openai`).
 3. **Payments**: `src/app/api/billing/route.ts` — plug in Stripe or Razorpay checkout and set the plan from a webhook.
 4. Deploy to Vercel (or any Node host). `maxDuration` is set to 300 s on the streaming routes.
+
+## Backend overview
+
+| Concern | Where | Notes |
+| --- | --- | --- |
+| Database | `src/lib/db/` | One `Database` interface, three drivers: `sqlite.ts` (default, `node:sqlite`), `supabase.ts` (Postgres), `local.ts` (JSON fallback). `DB_DRIVER` overrides. |
+| Credits | `spend_credits` / `grant_credits` | Atomic (SQL transaction / Postgres function) + ledger table `credit_transactions`. Monthly refill on login. |
+| Payments | `src/lib/payments.ts`, `api/billing/*` | Razorpay order → Checkout popup → `/api/billing/verify` (HMAC) · Stripe Checkout → webhook. Idempotent fulfilment. |
+| Validation | `src/lib/validate.ts` | Every POST body validated; clear 400 messages. |
+| Rate limits | `src/lib/ratelimit.ts` | Per-user sliding windows (generate 20/10 min, edit 40, scrape 30…), 429 + `Retry-After`. |
+| Storage | `src/lib/storage.ts` | Screenshots → Supabase Storage bucket `screenshots` (public URL) when configured; inline data URL otherwise. |
+| Auth guard | `src/proxy.ts` | Refreshes Supabase session cookies, redirects signed-out users from `/dashboard` & `/editor`, security headers. |
+| Health | `GET /api/health` | DB / AI / payments status for uptime checks. |
+| Usage | `GET /api/usage` | Credits, counts and ledger for the signed-in user. |
+
+### API reference
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| GET/POST | `/api/projects` | list / create project (validated, rate-limited) |
+| GET/PATCH/DELETE | `/api/projects/:id` | project + variants / rename, set active / delete |
+| PATCH/DELETE | `/api/variants/:id` | save edited HTML / delete |
+| POST | `/api/scrape` | read a URL (SSRF-guarded) |
+| POST | `/api/generate` | stream one design (1 credit) |
+| POST | `/api/edit` | stream an AI edit (1 credit) |
+| POST | `/api/publish` | publish / unpublish → `/s/:slug` |
+| GET/POST | `/api/billing` | payment history / start checkout |
+| POST | `/api/billing/verify` | Razorpay signature verification |
+| POST | `/api/billing/webhook/{razorpay,stripe}` | payment webhooks |
+| GET | `/api/usage`, `/api/me`, `/api/health` | account / status |
 
 ## Project structure
 

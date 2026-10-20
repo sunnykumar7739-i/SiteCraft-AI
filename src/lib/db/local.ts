@@ -1,7 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import type { Database } from "./index";
-import type { Project, User, Variant } from "@/lib/types";
+import type { CreditTransaction, Payment, Project, User, Variant } from "@/lib/types";
 
 /**
  * Local JSON file store for demo / development (no Supabase needed).
@@ -16,7 +16,11 @@ interface Store {
   users: Record<string, User>;
   projects: Record<string, Project>;
   variants: Record<string, Variant>;
+  credits?: CreditTransaction[];
+  payments?: Record<string, Payment>;
 }
+
+const newId = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2));
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 const DATA_FILE = path.join(DATA_DIR, "db.json");
@@ -67,12 +71,44 @@ export class LocalDatabase implements Database {
       return (s.users[id] = { ...s.users[id], ...patch });
     });
   }
-  spendCredits(id: string, amount: number) {
+  spendCredits(id: string, amount: number, reason: CreditTransaction["reason"], refId: string | null = null) {
     return withStore((s) => {
       const u = s.users[id];
       if (!u || u.credits < amount) return null;
-      return (s.users[id] = { ...u, credits: u.credits - amount });
+      const updated = (s.users[id] = { ...u, credits: u.credits - amount });
+      (s.credits ??= []).push({ id: `tx_${newId()}`, userId: id, delta: -amount, balanceAfter: updated.credits, reason, refId, createdAt: new Date().toISOString() });
+      return updated;
     });
+  }
+  grantCredits(id: string, amount: number, reason: CreditTransaction["reason"], refId: string | null = null, setTo = false) {
+    return withStore((s) => {
+      const u = s.users[id];
+      if (!u) throw new Error("User not found");
+      const next = setTo ? amount : u.credits + amount;
+      const updated = (s.users[id] = { ...u, credits: next });
+      (s.credits ??= []).push({ id: `tx_${newId()}`, userId: id, delta: next - u.credits, balanceAfter: next, reason, refId, createdAt: new Date().toISOString() });
+      return updated;
+    });
+  }
+  listCreditTransactions(userId: string, limit = 50) {
+    return read((s) => (s.credits ?? []).filter((t) => t.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit));
+  }
+
+  createPayment(p: Payment) {
+    return withStore((s) => ((s.payments ??= {})[p.id] = p));
+  }
+  updatePayment(id: string, patch: Partial<Payment>) {
+    return withStore((s) => {
+      const pay = (s.payments ??= {})[id];
+      if (!pay) throw new Error("Payment not found");
+      return (s.payments[id] = { ...pay, ...patch, updatedAt: new Date().toISOString() });
+    });
+  }
+  getPaymentByRef(providerRef: string) {
+    return read((s) => Object.values(s.payments ?? {}).find((p) => p.providerRef === providerRef) ?? null);
+  }
+  listPayments(userId: string) {
+    return read((s) => Object.values(s.payments ?? {}).filter((p) => p.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
   }
 
   listProjects(userId: string) {

@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
-import { jsonError, withUser } from "@/lib/api";
+import { withUser } from "@/lib/api";
 import { getDb, newId } from "@/lib/db";
 import { normalizeUrl } from "@/lib/scrape";
-import type { GenerationMode, Project, SourceType } from "@/lib/types";
+import { LIMITS, rateLimit } from "@/lib/ratelimit";
+import { storeScreenshot } from "@/lib/storage";
+import { readJson, v, ValidationError } from "@/lib/validate";
+import { STYLE_PRESETS, type Project } from "@/lib/types";
 
 export const GET = withUser(async (user) => {
   const db = await getDb();
@@ -10,52 +13,45 @@ export const GET = withUser(async (user) => {
   return NextResponse.json({ projects });
 });
 
-interface CreateBody {
-  name?: string;
-  sourceType: SourceType;
-  sourceUrl?: string;
-  sourceScreenshot?: string;
-  description?: string;
-  instructions?: string;
-  mode: GenerationMode;
-  style?: string;
-}
-
 export const POST = withUser(async (user, req: Request) => {
-  const body = (await req.json()) as CreateBody;
-  if (!["url", "screenshot", "describe"].includes(body.sourceType)) return jsonError("Invalid sourceType");
-  if (!["multi", "manual"].includes(body.mode)) return jsonError("Invalid mode");
+  rateLimit(`projects:${user.id}`, LIMITS.projects);
+  const body = await readJson(req);
+
+  const sourceType = v.oneOf(body.sourceType, "sourceType", ["url", "screenshot", "describe"] as const);
+  const mode = v.oneOf(body.mode, "mode", ["multi", "manual"] as const);
+  const description = v.string(body.description, "description", { optional: true, max: 4000 });
+  const instructions = v.string(body.instructions, "instructions", { optional: true, max: 2000 });
+  const name = v.string(body.name, "name", { optional: true, max: 80 });
+  const style = mode === "manual" ? v.oneOf(body.style, "style", STYLE_PRESETS.map((s) => s.key), "minimal-light") : null;
 
   let sourceUrl: string | null = null;
-  if (body.sourceType === "url") {
-    if (!body.sourceUrl) return jsonError("URL is required");
+  if (sourceType === "url") {
     try {
-      sourceUrl = normalizeUrl(body.sourceUrl);
+      sourceUrl = normalizeUrl(v.string(body.sourceUrl, "URL", { max: 2000 }));
     } catch (e) {
-      return jsonError(e instanceof Error ? e.message : "Invalid URL");
+      throw new ValidationError(e instanceof Error ? e.message : "Invalid URL");
     }
   }
-  if (body.sourceType === "screenshot" && !body.sourceScreenshot) return jsonError("Screenshot is required");
-  if (body.sourceType === "describe" && !body.description?.trim()) return jsonError("Description is required");
-  if (body.sourceScreenshot && body.sourceScreenshot.length > 6_000_000) return jsonError("Screenshot too large (max ~4MB)");
+  const screenshot = sourceType === "screenshot" ? v.dataUrlImage(body.sourceScreenshot, "screenshot") : null;
+  if (sourceType === "screenshot" && !screenshot) throw new ValidationError("Screenshot is required");
+  if (sourceType === "describe" && description.length < 10) throw new ValidationError("Please describe your website in a bit more detail");
 
+  const id = newId("prj");
   const now = new Date().toISOString();
-  const name =
-    body.name?.trim() ||
-    (sourceUrl ? new URL(sourceUrl).hostname.replace(/^www\./, "") : null) ||
-    (body.description ? body.description.trim().split(/\s+/).slice(0, 5).join(" ") : "Untitled site");
-
   const project: Project = {
-    id: newId("prj"),
+    id,
     userId: user.id,
-    name,
-    sourceType: body.sourceType,
+    name:
+      name ||
+      (sourceUrl ? new URL(sourceUrl).hostname.replace(/^www\./, "") : null) ||
+      (description ? description.split(/\s+/).slice(0, 5).join(" ") : "Untitled site"),
+    sourceType,
     sourceUrl,
-    sourceScreenshot: body.sourceScreenshot ?? null,
-    description: body.description?.trim() || null,
-    instructions: body.instructions?.trim() || null,
-    mode: body.mode,
-    style: body.mode === "manual" ? body.style || "minimal-light" : null,
+    sourceScreenshot: screenshot ? await storeScreenshot(screenshot, user.id, id) : null,
+    description: description || null,
+    instructions: instructions || null,
+    mode,
+    style,
     status: "draft",
     activeVariantId: null,
     publishedSlug: null,

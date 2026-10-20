@@ -44,5 +44,5 @@ next-env.d.ts
 .data/
 .env.local
 
-# keep the example env file in git
-!.env.example
+# sqlite database
+/data/

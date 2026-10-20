@@ -16,7 +16,8 @@ async function refreshCredits(user: User): Promise<User> {
   const db = await getDb();
   let next = user.creditsResetAt;
   while (new Date(next) <= new Date()) next = addMonth(next);
-  return db.updateUser(user.id, { credits: PLAN_LIMITS[user.plan].credits, creditsResetAt: next });
+  await db.updateUser(user.id, { creditsResetAt: next });
+  return db.grantCredits(user.id, PLAN_LIMITS[user.plan].credits, "monthly_refill", null, true);
 }
 
 async function ensureUser(id: string, email: string, name: string | null, avatarUrl: string | null): Promise<User> {

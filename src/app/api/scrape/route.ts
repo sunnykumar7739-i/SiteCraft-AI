@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { jsonError, withUser } from "@/lib/api";
 import { scrapeUrl } from "@/lib/scrape";
+import { LIMITS, rateLimit } from "@/lib/ratelimit";
 
 /** Quick preview of what we can read from a URL (used in the create flow). */
-export const POST = withUser(async (_user, req: Request) => {
+export const POST = withUser(async (user, req: Request) => {
+  rateLimit(`scrape:${user.id}`, LIMITS.scrape);
   const { url } = (await req.json()) as { url?: string };
   if (!url) return jsonError("url is required");
   try {

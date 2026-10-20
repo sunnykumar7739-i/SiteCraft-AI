@@ -1,9 +1,12 @@
-import { jsonError, ownedProject, spendCredits, withUser } from "@/lib/api";
+import { ownedProject, spendCredits, withUser } from "@/lib/api";
 import { providerConfigured, streamText } from "@/lib/ai/provider";
 import { buildGenerateBrief, cleanHtml, SYSTEM_GENERATE } from "@/lib/ai/prompts";
 import { mockGenerate } from "@/lib/ai/mock";
 import { getDb, newId } from "@/lib/db";
 import { scrapeUrl } from "@/lib/scrape";
+import { LIMITS, rateLimit } from "@/lib/ratelimit";
+import { screenshotAsDataUrl } from "@/lib/storage";
+import { readJson, v } from "@/lib/validate";
 import { CREDIT_COST, STYLE_PRESETS, type ScrapedContent, type Variant } from "@/lib/types";
 
 export const maxDuration = 300;
@@ -14,12 +17,14 @@ export const maxDuration = 300;
  * The variant row is saved once the stream completes.
  */
 export const POST = withUser(async (user, req: Request) => {
-  const { projectId, styleKey } = (await req.json()) as { projectId?: string; styleKey?: string };
-  if (!projectId) return jsonError("projectId is required");
+  rateLimit(`generate:${user.id}`, LIMITS.generate);
+  const body = await readJson(req);
+  const projectId = v.id(body.projectId, "projectId");
+  const styleKey = v.oneOf(body.styleKey, "styleKey", STYLE_PRESETS.map((s) => s.key), STYLE_PRESETS[0].key);
   const preset = STYLE_PRESETS.find((s) => s.key === styleKey) ?? STYLE_PRESETS[0];
 
   const project = await ownedProject(user, projectId);
-  await spendCredits(user, CREDIT_COST.generateVariant);
+  await spendCredits(user, CREDIT_COST.generateVariant, "generate", project.id);
 
   const db = await getDb();
   let scraped: ScrapedContent | null = null;
@@ -46,7 +51,7 @@ export const POST = withUser(async (user, req: Request) => {
     ? streamText({
         system: SYSTEM_GENERATE,
         messages: [{ role: "user", content: buildGenerateBrief(project, preset.key, scraped) }],
-        image: project.sourceType === "screenshot" ? project.sourceScreenshot : null,
+        image: project.sourceType === "screenshot" && project.sourceScreenshot ? await screenshotAsDataUrl(project.sourceScreenshot) : null,
         maxTokens: 16000,
         temperature: 0.8,
       })

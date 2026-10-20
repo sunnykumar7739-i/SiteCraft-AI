@@ -42,6 +42,34 @@ export interface Variant {
   createdAt: string;
 }
 
+export type CreditReason = "generate" | "edit" | "monthly_refill" | "plan_change" | "purchase" | "refund" | "admin";
+
+export interface CreditTransaction {
+  id: string;
+  userId: string;
+  delta: number; // negative = spent
+  balanceAfter: number;
+  reason: CreditReason;
+  refId: string | null; // project / variant / payment id
+  createdAt: string;
+}
+
+export type PaymentProvider = "razorpay" | "stripe" | "manual";
+export type PaymentStatus = "created" | "paid" | "failed";
+
+export interface Payment {
+  id: string;
+  userId: string;
+  provider: PaymentProvider;
+  plan: Plan;
+  amount: number; // in minor units (paise / cents)
+  currency: string;
+  status: PaymentStatus;
+  providerRef: string | null; // order id / session id
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ScrapedContent {
   title: string;
   description: string;

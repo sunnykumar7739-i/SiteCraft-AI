@@ -3,6 +3,8 @@ import { providerConfigured, streamText } from "@/lib/ai/provider";
 import { buildEditMessage, cleanHtml, SYSTEM_EDIT } from "@/lib/ai/prompts";
 import { mockEdit } from "@/lib/ai/mock";
 import { getDb, newId } from "@/lib/db";
+import { LIMITS, rateLimit } from "@/lib/ratelimit";
+import { readJson, v } from "@/lib/validate";
 import { CREDIT_COST, type Variant } from "@/lib/types";
 
 export const maxDuration = 300;
@@ -13,19 +15,18 @@ export const maxDuration = 300;
  * (header X-Variant-Id), otherwise the variant is updated in place.
  */
 export const POST = withUser(async (user, req: Request) => {
-  const { variantId, instruction, selector, asNew } = (await req.json()) as {
-    variantId?: string;
-    instruction?: string;
-    selector?: string | null;
-    asNew?: boolean;
-  };
-  if (!variantId || !instruction?.trim()) return jsonError("variantId and instruction are required");
+  rateLimit(`edit:${user.id}`, LIMITS.edit);
+  const body = await readJson(req);
+  const variantId = v.id(body.variantId, "variantId");
+  const instruction = v.string(body.instruction, "instruction", { min: 2, max: 2000 });
+  const selector = v.string(body.selector, "selector", { optional: true, max: 500 }) || null;
+  const asNew = v.bool(body.asNew);
 
   const db = await getDb();
   const base = await db.getVariant(variantId);
   if (!base) return jsonError("Variant not found", 404);
   const project = await ownedProject(user, base.projectId);
-  await spendCredits(user, CREDIT_COST.edit);
+  await spendCredits(user, CREDIT_COST.edit, "edit", base.id);
 
   let target: Variant = base;
   if (asNew) {
@@ -43,11 +44,11 @@ export const POST = withUser(async (user, req: Request) => {
   const source = providerConfigured()
     ? streamText({
         system: SYSTEM_EDIT,
-        messages: [{ role: "user", content: buildEditMessage(base.html, instruction.trim(), selector) }],
+        messages: [{ role: "user", content: buildEditMessage(base.html, instruction, selector) }],
         maxTokens: 16000,
         temperature: 0.4,
       })
-    : mockEdit(base.html, instruction.trim());
+    : mockEdit(base.html, instruction);
 
   const encoder = new TextEncoder();
   let full = "";

@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "./index";
-import type { Project, User, Variant } from "@/lib/types";
+import type { CreditTransaction, Payment, Project, User, Variant } from "@/lib/types";
 
 /* ---------- row <-> model mappers (snake_case in Postgres) ---------- */
 
@@ -113,6 +113,43 @@ const variantToRow = (v: Partial<Variant>): Partial<VariantRow> => ({
   ...(v.createdAt !== undefined && { created_at: v.createdAt }),
 });
 
+type PaymentRow = {
+  id: string;
+  user_id: string;
+  provider: Payment["provider"];
+  plan: Payment["plan"];
+  amount: number;
+  currency: string;
+  status: Payment["status"];
+  provider_ref: string | null;
+  created_at: string;
+  updated_at: string;
+};
+const paymentFromRow = (r: PaymentRow): Payment => ({
+  id: r.id,
+  userId: r.user_id,
+  provider: r.provider,
+  plan: r.plan,
+  amount: r.amount,
+  currency: r.currency,
+  status: r.status,
+  providerRef: r.provider_ref,
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+});
+const paymentToRow = (p: Partial<Payment>): Partial<PaymentRow> => ({
+  ...(p.id !== undefined && { id: p.id }),
+  ...(p.userId !== undefined && { user_id: p.userId }),
+  ...(p.provider !== undefined && { provider: p.provider }),
+  ...(p.plan !== undefined && { plan: p.plan }),
+  ...(p.amount !== undefined && { amount: p.amount }),
+  ...(p.currency !== undefined && { currency: p.currency }),
+  ...(p.status !== undefined && { status: p.status }),
+  ...(p.providerRef !== undefined && { provider_ref: p.providerRef }),
+  ...(p.createdAt !== undefined && { created_at: p.createdAt }),
+  ...(p.updatedAt !== undefined && { updated_at: p.updatedAt }),
+});
+
 /**
  * Server-side Supabase client using the service role key (bypasses RLS).
  * All authorization is enforced in our API routes (userId checks).
@@ -144,12 +181,44 @@ export class SupabaseDatabase implements Database {
     return userFromRow(data as UserRow);
   }
 
-  async spendCredits(id: string, amount: number) {
-    // SQL function defined in supabase/schema.sql — atomic UPDATE ... WHERE credits >= amount
-    const { data, error } = await this.sb.rpc("spend_credits", { p_user_id: id, p_amount: amount });
+  async spendCredits(id: string, amount: number, reason: CreditTransaction["reason"], refId: string | null = null) {
+    // SQL function defined in supabase/schema.sql — atomic UPDATE ... WHERE credits >= amount + ledger insert
+    const { data, error } = await this.sb.rpc("spend_credits", { p_user_id: id, p_amount: amount, p_reason: reason, p_ref: refId });
     if (error) throw new Error(error.message);
     const row = Array.isArray(data) ? data[0] : data;
     return row ? userFromRow(row as UserRow) : null;
+  }
+  async grantCredits(id: string, amount: number, reason: CreditTransaction["reason"], refId: string | null = null, setTo = false) {
+    const { data, error } = await this.sb.rpc("grant_credits", { p_user_id: id, p_amount: amount, p_reason: reason, p_ref: refId, p_set: setTo });
+    if (error) throw new Error(error.message);
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) throw new Error("User not found");
+    return userFromRow(row as UserRow);
+  }
+  async listCreditTransactions(userId: string, limit = 50) {
+    const data = unwrap(
+      await this.sb.from("credit_transactions").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(limit),
+    ) as { id: string; user_id: string; delta: number; balance_after: number; reason: CreditTransaction["reason"]; ref_id: string | null; created_at: string }[];
+    return data.map((r) => ({ id: r.id, userId: r.user_id, delta: r.delta, balanceAfter: r.balance_after, reason: r.reason, refId: r.ref_id, createdAt: r.created_at }));
+  }
+
+  async createPayment(p: Payment) {
+    const data = unwrap(await this.sb.from("payments").insert(paymentToRow(p)).select().single());
+    return paymentFromRow(data as PaymentRow);
+  }
+  async updatePayment(id: string, patch: Partial<Payment>) {
+    const data = unwrap(
+      await this.sb.from("payments").update(paymentToRow({ ...patch, updatedAt: new Date().toISOString() })).eq("id", id).select().single(),
+    );
+    return paymentFromRow(data as PaymentRow);
+  }
+  async getPaymentByRef(providerRef: string) {
+    const { data } = await this.sb.from("payments").select("*").eq("provider_ref", providerRef).maybeSingle();
+    return data ? paymentFromRow(data as PaymentRow) : null;
+  }
+  async listPayments(userId: string) {
+    const data = unwrap(await this.sb.from("payments").select("*").eq("user_id", userId).order("created_at", { ascending: false }));
+    return (data as PaymentRow[]).map(paymentFromRow);
   }
 
   async listProjects(userId: string) {
